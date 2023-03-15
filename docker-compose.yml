@@ -1,0 +1,10 @@
+version: '3'
+services:
+  nano_bootstrap_overview:
+    build: .
+    container_name: nano_bootstrap_overview
+    restart: unless-stopped
+    ports:
+     - '127.0.0.1:3044:5000'
+    volumes:
+    - ./data:/app/data
