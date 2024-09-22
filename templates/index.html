@@ -1,14 +1,60 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Telemetry Metrics</title>
-    <link rel="stylesheet" href="/static/styles.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
-    <script src="/static/app.js"></script>
-</head>
-<body>
-    <div id="metrics-container"></div>
-</body>
-</html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Telemetry Metrics</title>
+        <link rel="stylesheet" href="/static/styles.css">
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+        <script src="/static/app.js"></script>
+        <style>
+            .link-button {
+                background: none;
+                border: none;
+                color: rgba(0, 0, 122, 0.383);
+                text-decoration: underline;
+                cursor: pointer;
+                font-size: 1em;
+                font-family: inherit;
+            }
+    
+            #filter-container {
+                display: flex;
+                flex-direction: row;
+                align-items: center;
+                justify-content: start;
+                margin-bottom: 20px;
+            }
+    
+            label {
+                margin-right: 10px;
+                font-weight: bold;
+                font-size: 1.2em;
+            }
+    
+            select {
+                padding: 5px 10px;
+                font-size: 1em;
+                border: 1px solid #ccc;
+                border-radius: 5px;
+                appearance: none;
+                background-color: #f9f9f9;
+                background-image: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="2.4" height="1.2" viewBox="0 0 10 5"><polygon points="0,0 10,0 5,5"/></svg>');
+                background-repeat: no-repeat;
+                background-position: right .8em top 50%, 0 0;
+                background-size: .65em auto, 100%;
+            }
+        </style>
+    </head>
+    <body>
+        <input type="hidden" id="environment" value="{{ environment }}">
+        <div id="filter-container">
+            <label for="version-filter">Filter by Node Version:</label>
+            <select id="version-filter">
+                <option value="">All Versions</option>
+            </select>
+        </div>
+        <div id="metrics-container"></div>
+    </body>
+    </html>
+    

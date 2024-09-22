@@ -12,13 +12,14 @@ body {
 
 .bar-container {
     width: 100%;
-    background-color: #f3f3f3;
+    background-color: #f3f3f341;
     height: 20px;
+    position: relative;
 }
 
 .bar {
     height: 20px;
-    background-color: #1e90ff;
+    background-color: #71b4f7;
     text-align: right;
     padding-right: 5px;
     color: white;
@@ -26,8 +27,19 @@ body {
 
 .bar_cemented {
     height: 20px;
-    background-color: #32CD32;
+    background-color: #8de68e;
     text-align: right;
     padding-right: 5px;
     color: white;
+}
+
+.bar-text {
+    color: rgb(57, 57, 57);
+    font-size: 14px;
+    font-weight: bold;
+    text-align: left;
+    position: absolute; 
+    top: 50%;
+    transform: translateY(-50%);
+    padding-left: 5px; 
 }
