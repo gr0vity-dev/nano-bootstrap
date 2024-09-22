@@ -2,7 +2,7 @@ version: '3'
 services:
   bootstrap_db:
     image: postgres
-    container_name: bootstrap_db
+    container_name: nano_bootstrap_db
     restart: unless-stopped
     ports:
       - '5678:5432'
@@ -17,17 +17,19 @@ services:
 
   nano_bootstrap_overview:
     build: .
-    container_name: nano_bootstrap_overview
+    container_name: nano_bootstrap_app
     restart: unless-stopped
     ports:
      - '127.0.0.1:3044:5000'
     volumes:
-    - ./data:/app/data
+    - .:/app
+    depends_on:
+      - bootstrap_db
+    environment:
+      - SQLALCHEMY_DATABASE_URI=postgresql://nano:pw@bootstrap_db:5432/bootstrap
     networks:
      - nano_bootstrap
 
 networks:
   nano_bootstrap:
     driver: bridge
-
-

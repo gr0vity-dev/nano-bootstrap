@@ -1,184 +1,281 @@
 from flask import Flask, render_template, jsonify, request, redirect, url_for
 from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.executors.pool import ThreadPoolExecutor
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime, timedelta
 from requests.auth import HTTPBasicAuth
 import atexit
 import requests
 import json
+import logging
+import os
 
-app = Flask(__name__)
-with open('secrets.json') as secrets_file:
-    secrets = json.load(secrets_file)
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-scheduler = BackgroundScheduler()
-scheduler.add_executor('processpool')
+# Initialize SQLAlchemy without the app
+db = SQLAlchemy()
 
-app.config['SQLALCHEMY_DATABASE_URI'] = secrets["SQLALCHEMY_DATABASE_URI"]
-db = SQLAlchemy(app)
+# Load secrets
+try:
+    with open('secrets.json') as secrets_file:
+        secrets = json.load(secrets_file)
+except FileNotFoundError:
+    logger.error("secrets.json file not found.")
+    secrets = {}
 
+def create_app():
+    app = Flask(__name__)
 
-class Node(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    block_count = db.Column(db.Integer)
-    cemented_count = db.Column(db.Integer)
-    address = db.Column(db.String)
-    node_id = db.Column(db.String)
-    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+    # Database configuration
+    app.config['SQLALCHEMY_DATABASE_URI'] = secrets.get(
+        "SQLALCHEMY_DATABASE_URI", "postgresql://nano:pw@bootstrap_db:5432/bootstrap"
+    )
+    app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-    def __repr__(self):
-        return f'Node {self.node_id}'
+    # Initialize SQLAlchemy with the app
+    db.init_app(app)
 
+    # Define the Node model
+    class Node(db.Model):
+        id = db.Column(db.Integer, primary_key=True)
+        environment = db.Column(db.String)  # Field to distinguish environments
+        block_count = db.Column(db.Integer)
+        cemented_count = db.Column(db.Integer)
+        address = db.Column(db.String)
+        node_id = db.Column(db.String)
+        major_version = db.Column(db.String)
+        minor_version = db.Column(db.String)
+        patch_version = db.Column(db.String)
+        pre_release_version = db.Column(db.String)
+        timestamp = db.Column(db.DateTime, default=datetime.utcnow)
 
-def get_metrics_background():
-    for environment in ['beta', 'live']:
-        print(f"EXEC get_metrics_background {environment}")
-        url = 'https://rpcproxy.bnano.info/proxy' if environment == 'beta' else 'https://proxy.nanobrowse.com/rpc'
-        data = {"action": "telemetry", "raw": "true"}
-        headers = {'Content-Type': 'application/json'}
+        def __repr__(self):
+            return f'Node {self.node_id} ({self.environment})'
 
-        auth = None
-        if environment == 'live':
-            username = secrets["LIVE_USER"]
-            password = secrets["LIVE_PW"]
-            auth = HTTPBasicAuth(username, password)
+    # Make the Node model accessible globally
+    app.Node = Node
 
-        response = requests.post(url,
-                                 data=json.dumps(data),
-                                 headers=headers,
-                                 auth=auth)
-        metrics = response.json()['metrics']
+    # Scheduler setup with ThreadPoolExecutor
+    scheduler = BackgroundScheduler(executors={'default': ThreadPoolExecutor(1)})
 
-        for metric in metrics:
-            node = Node(block_count=int(metric['block_count']),
-                        cemented_count=int(metric['cemented_count']),
-                        address=metric['address'],
-                        node_id=metric['node_id'])
-            db.session.add(node)
-        db.session.commit()
+    # Schedule job every 30 minutes
+    scheduler.add_job(
+        func=get_metrics_background,
+        args=[app],
+        trigger="interval",
+        minutes=30
+    )
 
+    # Do not start the scheduler here
+    # scheduler.start()
 
-# Schedule job every 30 minutes
-scheduler.add_job(func=get_metrics_background, trigger="interval", minutes=30)
-scheduler.start()
+    # Shut down the scheduler when exiting the app
+    atexit.register(lambda: scheduler.shutdown())
 
-# Shut down the scheduler when exiting the app
-atexit.register(lambda: scheduler.shutdown())
+    # Expose the scheduler
+    app.scheduler = scheduler
 
+    # Define routes
+    @app.route('/')
+    def root():
+        return redirect(url_for('index', environment='beta'))
 
-@app.route('/')
-def root():
-    return redirect(url_for('index', environment='beta'))
+    @app.route('/<environment>')
+    def index(environment):
+        if environment not in ['beta', 'live']:
+            return "Invalid environment", 404
+        return render_template('index.html', environment=environment)
 
+    @app.route('/node_chart/<node_id>', methods=['GET'])
+    def node_chart(node_id):
+        return render_template('node_chart.html', node_id=node_id)
 
-# @app.route('/node/<address>')
-# def node_page(address):
-#     return render_template('node_data.html')
+    @app.route('/node_data/<node_id>', methods=['GET'])
+    def node_data(node_id):
+        try:
+            Node = app.Node
+            one_week_ago = datetime.utcnow() - timedelta(weeks=1)
+            nodes = Node.query.filter(
+                Node.node_id == node_id,
+                Node.timestamp >= one_week_ago
+            ).order_by(Node.timestamp.asc()).all()
 
+            result = []
+            for node in nodes:
+                # Assuming the version is stored as major.minor.patch format
+                major_version =  node.major_version 
+                minor_version =node.minor_version 
+                patch_version = node.patch_version 
 
-# @app.route('/node_chart', methods=['GET'])
-# def node_chart():
-#     node_id = request.args.get('node_id')
-#     return render_template('node_chart.html', node_id=node_id)
+                formatted_version = f"{major_version}.{minor_version}.{patch_version}"
 
-@app.route('/node_chart/<node_id>', methods=['GET'])
-def node_chart(node_id):
-    return render_template('node_chart.html', node_id=node_id)
+                result.append({
+                    'block_count': node.block_count,
+                    'cemented_count': node.cemented_count,
+                    'timestamp': node.timestamp.isoformat(),
+                    'version': formatted_version
+                })
 
+            return jsonify(result)
+        except Exception as e:
+            logger.error(f"Error fetching node data: {e}")
+            return jsonify({"error": "Error fetching node data"}), 500
 
+    @app.route('/get_metrics', methods=['POST'])
+    def get_metrics():
+        try:
+            Node = app.Node
+            environment = request.form.get('environment')
+            if environment not in ['beta', 'live']:
+                return "Invalid environment", 404
 
-@app.route('/<environment>')
-def index(environment):
-    if environment not in ['beta', 'live']:
-        return "Invalid environment", 404
-    return render_template('index.html', environment=environment)
+            # Fetch latest telemetry data via RPC call (without storing in the database)
+            url = 'https://rpcproxy.bnano.info/proxy' if environment == 'beta' else 'https://proxy.nanobrowse.com/rpc'
+            data = {"action": "telemetry", "raw": "true"}  # Use 'telemetry' to get data from all peers
+            headers = {'Content-Type': 'application/json'}
 
+            auth = None
+            if environment == 'live':
+                username = secrets.get("LIVE_USER")
+                password = secrets.get("LIVE_PW")
+                if not username or not password:
+                    logger.error("LIVE_USER or LIVE_PW not found in secrets.json.")
+                    return jsonify({"error": "Authentication required"}), 500
+                auth = HTTPBasicAuth(username, password)
 
-@app.route('/node_data/<node_id>', methods=['GET'])
-def node_data(node_id):
-    one_week_ago = datetime.utcnow() - timedelta(weeks=1)
+            response = requests.post(url, data=json.dumps(data), headers=headers, auth=auth, timeout=60)
+            response.raise_for_status()
+            latest_metrics = response.json().get('metrics', [])
+     
 
-    nodes = Node.query.filter(Node.node_id == node_id,
-                              Node.timestamp >= one_week_ago).order_by(
-                                  Node.timestamp.asc()).all()
+            # Prepare data for response
+            now = datetime.utcnow()
+            one_hour_ago = now - timedelta(hours=1)
+            one_day_ago = now - timedelta(days=1)
 
-    result = []
-    for node in nodes:
-        result.append({
-            'block_count': node.block_count,
-            'cemented_count': node.cemented_count,
-            'timestamp': node.timestamp.isoformat()  # convert to string format
-        })
+            # Fetch historical data from the database
+            nodes_past_hour = Node.query.filter(
+                Node.timestamp <= one_hour_ago,
+                Node.environment == environment
+            ).order_by(Node.timestamp.desc()).all()
 
-    return jsonify(result)
+            nodes_past_day = Node.query.filter(
+                Node.timestamp <= one_day_ago,
+                Node.environment == environment
+            ).order_by(Node.timestamp.desc()).all()
 
+            nodes_past_hour_dict = {node.node_id: node for node in nodes_past_hour}
+            nodes_past_day_dict = {node.node_id: node for node in nodes_past_day}
 
-@app.route('/get_metrics', methods=['POST'])
-def get_metrics():
-    environment = request.form.get('environment')
-    if environment not in ['beta', 'live']:
-        return "Invalid environment", 404
+            # Calculate max block and cemented counts from latest metrics
+            max_block_count = max([int(metric.get('block_count', 0)) for metric in latest_metrics]) if latest_metrics else 0
+            max_cemented_count = max([int(metric.get('cemented_count', 0)) for metric in latest_metrics]) if latest_metrics else 0
 
-    url = 'https://rpcproxy.bnano.info/proxy' if environment == 'beta' else 'https://proxy.nanobrowse.com/rpc'
-    data = {"action": "telemetry", "raw": "true"}
-    headers = {'Content-Type': 'application/json'}
+            metrics_response = []
+            for metric in latest_metrics:
+                node_id = metric.get('node_id', '')
+                timestamp = datetime.utcnow()  # Current time
 
-    auth = None
-    if environment == 'live':
-        username = secrets["LIVE_USER"]
-        password = secrets["LIVE_PW"]
-        auth = HTTPBasicAuth(username, password)
+                metric_response = {
+                    'block_count': int(metric.get('block_count', 0)),
+                    'cemented_count': int(metric.get('cemented_count', 0)),
+                    'address': metric.get('address', ''),
+                    'node_id': node_id,
+                    'major_version': metric.get('major_version', ''),
+                    'minor_version': metric.get('minor_version', ''),
+                    'patch_version': metric.get('patch_version', ''),
+                    'pre_release_version': metric.get('pre_release_version', '')
+                }
 
-    response = requests.post(url,
-                             data=json.dumps(data),
-                             headers=headers,
-                             auth=auth)
-    metrics = response.json()['metrics']
+                # Fetch historical data for this node
+                node_past_hour = nodes_past_hour_dict.get(node_id)
+                node_past_day = nodes_past_day_dict.get(node_id)
 
-    max_block_count = max([int(metric['block_count']) for metric in metrics])
-    max_cemented_count = max(
-        [int(metric['cemented_count']) for metric in metrics])
+                if node_past_hour:
+                    delta_blocks = metric_response['block_count'] - node_past_hour.block_count
+                    delta_cemented = metric_response['cemented_count'] - node_past_hour.cemented_count
+                    delta_time_hours = (timestamp - node_past_hour.timestamp).total_seconds() / 3600
+                    if delta_time_hours > 0:
+                        metric_response['hourly_blocks'] = delta_blocks / delta_time_hours
+                        metric_response['hourly_cemented'] = delta_cemented / delta_time_hours
 
-    now = datetime.utcnow()
-    one_hour_ago = now - timedelta(hours=1)
-    one_day_ago = now - timedelta(days=1)
+                if node_past_day:
+                    delta_blocks = metric_response['block_count'] - node_past_day.block_count
+                    delta_cemented = metric_response['cemented_count'] - node_past_day.cemented_count
+                    delta_time_hours = (timestamp - node_past_day.timestamp).total_seconds() / 3600
+                    if delta_time_hours > 0:
+                        metric_response['daily_blocks'] = delta_blocks / delta_time_hours * 24
+                        metric_response['daily_cemented'] = delta_cemented / delta_time_hours * 24
 
-    # Pull all necessary data from the database at once
-    nodes_past_day = Node.query.filter(Node.timestamp.between(
-        one_day_ago, now)).all()
+                metrics_response.append(metric_response)
 
-    # Transform data into a form that is easier to work with
-    nodes_by_node_id = {node.node_id: node for node in nodes_past_day}
+            return jsonify(metrics=metrics_response, max_block_count=max_block_count, max_cemented_count=max_cemented_count)
+        except Exception as e:
+            logger.error(f"Error in /get_metrics: {e}")
+            return jsonify({"error": "Error fetching metrics"}), 500
 
-    for metric in metrics:
-        if not ("node_id" in metric and metric["node_id"]): continue
+    return app
 
-        node_past_hour = node_past_day = nodes_by_node_id.get(
-            metric['node_id'])
-        if node_past_hour and node_past_hour.timestamp < one_hour_ago:
-            node_past_hour = None
+# Define get_metrics_background at module level
+def get_metrics_background(app):
+    with app.app_context():
+        Node = app.Node
+        for environment in ['beta', 'live']:
+            logger.info(f"Fetching telemetry data for {environment} environment.")
+            try:
+                url = 'https://rpcproxy.bnano.info/proxy' if environment == 'beta' else 'https://proxy.nanobrowse.com/rpc'
+                data = {"action": "telemetry", "raw": "true"}  # Use 'telemetry' to get data from all peers
+                headers = {'Content-Type': 'application/json'}
 
-        for time_period in [(node_past_hour, 60, 'hourly'),
-                            (node_past_day, 24, 'daily')]:
-            node, time_multiplier, label_prefix = time_period
-            if node:
-                delta_time = (
-                    now - node.timestamp).total_seconds() / 3600  # in hours
-                for count_type in [('block_count', 'blocks'),
-                                   ('cemented_count', 'cemented')]:
-                    metric_key, label_suffix = count_type
-                    metric_value = (int(metric[metric_key]) - getattr(
-                        node, metric_key)) * time_multiplier / delta_time
-                    metric[
-                        f'{label_prefix}_{label_suffix}'] = metric_value if metric_value >= 0 else None
+                auth = None
+                if environment == 'live':
+                    username = secrets.get("LIVE_USER")
+                    password = secrets.get("LIVE_PW")
+                    if not username or not password:
+                        logger.error("LIVE_USER or LIVE_PW not found in secrets.json.")
+                        continue
+                    auth = HTTPBasicAuth(username, password)
 
-    return jsonify(metrics=metrics,
-                   max_block_count=max_block_count,
-                   max_cemented_count=max_cemented_count)
+                response = requests.post(url, data=json.dumps(data), headers=headers, auth=auth, timeout=60)
+                response.raise_for_status()
+                metrics = response.json().get('metrics', [])
 
+                timestamp = datetime.utcnow()
+                for metric in metrics:
+                    node = Node(
+                        environment=environment,  # Store the environment
+                        block_count=int(metric.get('block_count', 0)),
+                        cemented_count=int(metric.get('cemented_count', 0)),
+                        address=metric.get('address', ''),
+                        node_id=metric.get('node_id', ''),
+                        major_version=metric.get('major_version', ''),
+                        minor_version=metric.get('minor_version', ''),
+                        patch_version=metric.get('patch_version', ''),
+                        pre_release_version=metric.get('pre_release_version', ''),
+                        timestamp=timestamp
+                    )
+                    db.session.add(node)
+                db.session.commit()
+                logger.info(f"Telemetry data for {environment} environment fetched and stored successfully.")
+            except Exception as e:
+                logger.error(f"Error fetching telemetry data for {environment}: {e}")
+                db.session.rollback()
+
+app = create_app()
 
 if __name__ == '__main__':
     with app.app_context():
-        db.create_all()
-    # get_metrics_background()
+        try:
+            logger.info("Creating database tables if they don't exist...")
+            db.create_all()
+            logger.info("Database tables created or already exist.")
+
+            # Start the scheduler after tables are created
+            app.scheduler.start()
+            # Optionally, perform an initial data fetch
+            # get_metrics_background(app)
+        except Exception as e:
+            logger.error(f"Error during initial setup: {e}")
     app.run(host='0.0.0.0', port=5000)

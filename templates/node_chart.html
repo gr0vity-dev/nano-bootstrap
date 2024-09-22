@@ -1,0 +1,21 @@
+<!doctype html>
+<html>
+<head>
+  <title>Node Data</title>
+  <!-- Include Plotly.js from CDN -->
+  <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+  <style>
+    #nodeChart {
+      width: 100%;
+      height: 500px;
+    }
+  </style>
+</head>
+<body>
+  <div id="nodeChart"></div>
+  <script>
+    var node_id = "{{ node_id }}";
+  </script>
+  <script src="/static/chart.js"></script> <!-- Your updated chart.js file -->
+</body>
+</html>

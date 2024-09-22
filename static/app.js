@@ -5,10 +5,9 @@ function formatNumber(num) {
       return (num / 1000).toFixed(1) + 'K';
     }
     return num.toString();
-  }
-  
+}
 
-  $(document).ready(function () {
+$(document).ready(function () {
     const environment = $('#environment').val();
     const requestData = { environment: environment };
 
@@ -74,9 +73,9 @@ function formatNumber(num) {
             }
         });
 
-        // Sort otherNodes by highest percentage first
-        otherNodes.sort((a, b) => a.percentage - b.percentage);
-        bootstrappingNodes.sort((a, b) => a.percentage - b.percentage);
+        // Sort nodes by percentage
+        otherNodes.sort((a, b) => b.percentage - a.percentage);
+        bootstrappingNodes.sort((a, b) => b.percentage - a.percentage);
 
         // Add bootstrapping nodes section
         $('#metrics-container').append(`<h2>Bootstrapping Nodes (${bootstrappingNodes.length})</h2>`);
@@ -90,19 +89,12 @@ function formatNumber(num) {
         const versionFilter = $('#version-filter');
         const versionCounts = {};
 
-        bootstrappingNodes.forEach(node => {
-            if (versionCounts[node.version]) {
-                versionCounts[node.version]++;
+        metrics.forEach(metric => {
+            const versionString = `${metric.major_version}.${metric.minor_version}.${metric.patch_version}${metric.pre_release_version !== "0" ? `_DB${metric.pre_release_version}` : ''}`;
+            if (versionCounts[versionString]) {
+                versionCounts[versionString]++;
             } else {
-                versionCounts[node.version] = 1;
-            }
-        });
-
-        otherNodes.forEach(node => {
-            if (versionCounts[node.version]) {
-                versionCounts[node.version]++;
-            } else {
-                versionCounts[node.version] = 1;
+                versionCounts[versionString] = 1;
             }
         });
 
@@ -117,6 +109,8 @@ function formatNumber(num) {
             const selectedVersion = $(this).val();
             filterNodesByVersion(selectedVersion);
         });
+    }).fail(function () {
+        alert("Failed to fetch metrics data.");
     });
 });
 
@@ -129,11 +123,11 @@ function filterNodesByVersion(version) {
 
     if (version === '') {
         allMetrics.show(); // Show all metrics when no version selected
-        bootstrappingNodesCount = $('.metric[id^="V"][data-category="bootstrapping"]').length; // Count of bootstrapping nodes
-        otherNodesCount = $('.metric[id^="V"][data-category="other"]').length; // Count of other nodes
+        bootstrappingNodesCount = $('.metric[data-category="bootstrapping"]').length; // Count of bootstrapping nodes
+        otherNodesCount = $('.metric[data-category="other"]').length; // Count of other nodes
     } else {
         allMetrics.each(function () {
-            const metricVersion = $(this).find('.link-button').text().match(/V(\d+\.\d+\.\d+(?:_DB\d+)*)/)[1];
+            const metricVersion = $(this).attr('id').substring(1); // Remove the 'V' prefix
             if (metricVersion === version) {
                 $(this).show(); // Show metrics with matching version
                 if($(this).data('category') === 'bootstrapping') {
@@ -149,5 +143,3 @@ function filterNodesByVersion(version) {
     $('#metrics-container').find('h2:contains("Bootstrapping Nodes")').html(`Bootstrapping Nodes (${bootstrappingNodesCount})`);
     $('#metrics-container').find('h2:contains("Other Nodes")').html(`Other Nodes (${otherNodesCount})`);
 }
-
-

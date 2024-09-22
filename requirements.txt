@@ -1,4 +1,5 @@
-Flask==2.0.1
+Flask==2.0.3
+werkzeug==2.0.3
 Flask-SQLAlchemy==2.5.1
 SQLAlchemy==1.3.24
 APScheduler==3.7.0
